@@ -8,17 +8,30 @@ use valence::{
         AddCommand, CommandScopeRegistry,
     },
     command_macros::Command,
+    message::SendMessage,
     prelude::*,
     protocol::packets::play::command_tree_s2c::{Parser, StringArg},
 };
+
+use crate::color::ColorMap;
 
 pub struct TeamPlugin;
 
 impl Plugin for TeamPlugin {
     fn build(&self, app: &mut App) {
         app.add_command::<JoinTeamCommand>()
+            .add_event::<JoinTeamEvent>()
+            .insert_resource(ColorMap::new())
             .add_systems(Startup, setup)
-            .add_systems(Update, (handle_join_command, init_clients));
+            .add_systems(
+                Update,
+                (
+                    handle_join_command,
+                    init_clients,
+                    set_player_color,
+                    remove_player_color,
+                ),
+            );
     }
 }
 
@@ -60,13 +73,20 @@ impl CommandArg for Team {
 #[derive(Command, Debug, Clone)]
 #[paths("join {team?}")]
 #[scopes("danny.sheeptag.join")]
-pub struct JoinTeamCommand {
+struct JoinTeamCommand {
     team: Option<Team>,
+}
+
+#[derive(Event, Clone, Debug)]
+pub struct JoinTeamEvent {
+    pub entity: Entity,
+    pub team: Team,
 }
 
 fn handle_join_command(
     mut events: EventReader<CommandResultEvent<JoinTeamCommand>>,
     mut clients: Query<&mut Client, Without<Team>>,
+    mut ew: EventWriter<JoinTeamEvent>,
     mut commands: Commands,
 ) {
     for event in events.read() {
@@ -78,6 +98,10 @@ fn handle_join_command(
             Some(team) => {
                 commands.entity(event.executor).insert(team);
                 client.send_chat_message(format!("Joined team {team:?}."));
+                ew.send(JoinTeamEvent {
+                    entity: event.executor,
+                    team,
+                });
             }
             None => {
                 client.send_chat_message("Usage: /join <golem|sheep>");
@@ -93,5 +117,40 @@ fn setup(mut cmd_scopes: ResMut<CommandScopeRegistry>) {
 fn init_clients(mut clients: Query<&mut CommandScopes, Added<Client>>) {
     for mut perms in &mut clients {
         perms.add("danny.sheeptag");
+    }
+}
+
+fn set_player_color(
+    mut clients: Query<(&mut Client, &Team)>,
+    mut events: EventReader<JoinTeamEvent>,
+    mut colors: ResMut<ColorMap>,
+) {
+    for event in events.read() {
+        let Ok((mut client, team)) = clients.get_mut(event.entity) else {
+            continue;
+        };
+
+        match colors.register_player(event.entity, team) {
+            Ok(color) => {
+                client.send_chat_message(format!("You are now a {color:?} {team:?}."));
+            }
+            Err(()) => {
+                client.send_chat_message("No colors available for that team!");
+            }
+        }
+    }
+}
+
+fn remove_player_color(
+    mut clients: RemovedComponents<Client>,
+    mut colors: ResMut<ColorMap>,
+    mut commands: Commands,
+) {
+    for client in clients.read() {
+        let Some(entity) = commands.get_entity(client) else {
+            continue;
+        };
+
+        colors.unregister_player(entity.id());
     }
 }
