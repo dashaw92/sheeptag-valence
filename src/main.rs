@@ -1,12 +1,14 @@
 use valence::client::despawn_disconnected_clients;
 use valence::prelude::*;
 
+use valence_sheeptag::disguise::DisguisePlugin;
 use valence_sheeptag::teams::TeamPlugin;
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(TeamPlugin)
+        .add_plugins(DisguisePlugin)
         .add_systems(Startup, setup)
         .add_systems(Update, (despawn_disconnected_clients, init_clients))
         .run();

@@ -5,7 +5,7 @@ use PlayerColor::*;
 
 use crate::teams::Team;
 
-#[derive(Hash, PartialEq, Eq, Debug, Copy, Clone)]
+#[derive(Component, Hash, PartialEq, Eq, Debug, Copy, Clone)]
 pub enum PlayerColor {
     White,
     Orange,

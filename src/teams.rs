@@ -13,7 +13,7 @@ use valence::{
     protocol::packets::play::command_tree_s2c::{Parser, StringArg},
 };
 
-use crate::color::ColorMap;
+use crate::color::{ColorMap, PlayerColor};
 
 pub struct TeamPlugin;
 
@@ -25,12 +25,7 @@ impl Plugin for TeamPlugin {
             .add_systems(Startup, setup)
             .add_systems(
                 Update,
-                (
-                    handle_join_command,
-                    init_clients,
-                    set_player_color,
-                    remove_player_color,
-                ),
+                (handle_join_command, init_clients, remove_player_color),
             );
     }
 }
@@ -81,6 +76,7 @@ struct JoinTeamCommand {
 pub struct JoinTeamEvent {
     pub entity: Entity,
     pub team: Team,
+    pub color: PlayerColor,
 }
 
 fn handle_join_command(
@@ -88,6 +84,7 @@ fn handle_join_command(
     mut clients: Query<&mut Client, Without<Team>>,
     mut ew: EventWriter<JoinTeamEvent>,
     mut commands: Commands,
+    mut colors: ResMut<ColorMap>,
 ) {
     for event in events.read() {
         let Ok(mut client) = clients.get_mut(event.executor) else {
@@ -96,11 +93,17 @@ fn handle_join_command(
 
         match event.result.team {
             Some(team) => {
-                commands.entity(event.executor).insert(team);
-                client.send_chat_message(format!("Joined team {team:?}."));
+                let Ok(color) = colors.register_player(event.executor, &team) else {
+                    client.send_chat_message(format!("Sorry, the team {team:?} is full."));
+                    continue;
+                };
+
+                commands.entity(event.executor).insert((team, color));
+                client.send_chat_message(format!("You are now a {color:?} {team:?}."));
                 ew.send(JoinTeamEvent {
                     entity: event.executor,
                     team,
+                    color,
                 });
             }
             None => {
@@ -120,27 +123,6 @@ fn init_clients(mut clients: Query<&mut CommandScopes, Added<Client>>) {
     }
 }
 
-fn set_player_color(
-    mut clients: Query<(&mut Client, &Team)>,
-    mut events: EventReader<JoinTeamEvent>,
-    mut colors: ResMut<ColorMap>,
-) {
-    for event in events.read() {
-        let Ok((mut client, team)) = clients.get_mut(event.entity) else {
-            continue;
-        };
-
-        match colors.register_player(event.entity, team) {
-            Ok(color) => {
-                client.send_chat_message(format!("You are now a {color:?} {team:?}."));
-            }
-            Err(()) => {
-                client.send_chat_message("No colors available for that team!");
-            }
-        }
-    }
-}
-
 fn remove_player_color(
     mut clients: RemovedComponents<Client>,
     mut colors: ResMut<ColorMap>,
@@ -151,6 +133,8 @@ fn remove_player_color(
             continue;
         };
 
+        //This doesn't check if they were registered because
+        //ColorMap silently ignores calls with untracked players.
         colors.unregister_player(entity.id());
     }
 }
