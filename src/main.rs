@@ -1,11 +1,13 @@
 use valence::client::despawn_disconnected_clients;
 use valence::prelude::*;
 
+use valence_sheeptag::brand::SheeptagBrandPlugin;
 use valence_sheeptag::disguise::DisguisePlugin;
 use valence_sheeptag::teams::TeamPlugin;
 
 fn main() {
     App::new()
+        .add_plugins(SheeptagBrandPlugin)
         .add_plugins(DefaultPlugins)
         .add_plugins(TeamPlugin)
         .add_plugins(DisguisePlugin)
