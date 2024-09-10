@@ -43,21 +43,19 @@ fn init_clients(
             &mut Client,
             &mut EntityLayerId,
             &mut VisibleChunkLayer,
-            &mut VisibleEntityLayers,
+            // &mut VisibleEntityLayers,
             &mut Position,
         ),
         Added<Client>,
     >,
     layers: Query<Entity, With<ChunkLayer>>,
 ) {
-    for (_, mut layer_id, mut visible_chunk_layer, mut visible_entity_layers, mut pos) in
-        &mut clients
-    {
+    for (_, mut layer_id, mut visible_chunk_layer, mut pos) in &mut clients {
         let layer = layers.single();
 
         layer_id.0 = layer;
         visible_chunk_layer.0 = layer;
-        visible_entity_layers.0.insert(layer);
+        // visible_entity_layers.0.insert(layer);
 
         pos.set([0.5, 65.0, 0.5]);
     }

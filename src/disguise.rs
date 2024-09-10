@@ -1,18 +1,47 @@
+use std::borrow::Cow;
+
 use bevy_ecs::query::QueryData;
 use valence::app::Plugin;
+use valence::entity::entity::{CustomName, NameVisible};
 use valence::entity::iron_golem::IronGolemEntityBundle;
 use valence::entity::sheep::{Color, SheepEntityBundle};
-use valence::entity::{EntityAnimations, EntityStatuses, OnGround, Velocity};
+use valence::entity::{EntityAnimations, EntityId, EntityStatuses, OnGround, Velocity};
 use valence::prelude::*;
+use valence::protocol::packets::play::team_s2c::TeamFlags;
+use valence::protocol::packets::play::{team_s2c, EntitiesDestroyS2c, TeamS2c};
+use valence::protocol::VarInt;
+use valence::protocol::WritePacket;
+use valence::scoreboard::{Objective, ObjectiveBundle, ObjectiveDisplay, ObjectiveScores};
+use valence::text::color::{NamedColor, RgbColor};
 
-use crate::color::PlayerColor;
+use crate::color::{ColorMap, PlayerColor};
 use crate::teams::{JoinTeamEvent, Team};
+
+/*
+TODO: I'm currently thinking that I can make a public API for this via events?
+Something like:
+```rust
+event_writer.send(RequestDisguise {
+    entity: Entity,
+    disguise: Disguise::Sheep,
+});
+```
+
+And in this module, I'll have a system that listens for those events and
+retrieves the fields needed to actually execute that request.
+
+RequestDisguise
+Undisguise
+*/
 
 pub struct DisguisePlugin;
 
 impl Plugin for DisguisePlugin {
     fn build(&self, app: &mut valence::prelude::App) {
-        app.add_systems(Update, (spawn_clones, update_clones));
+        app.add_systems(Startup, setup).add_systems(
+            Update,
+            (init_clients, spawn_clones, update_clones, update_scoreboard),
+        );
     }
 }
 
@@ -36,6 +65,7 @@ struct ClonedEntity(Entity);
 #[derive(Debug, QueryData)]
 #[query_data(mutable)]
 struct CloneQuery {
+    id: &'static EntityId,
     position: &'static mut Position,
     head_yaw: &'static mut HeadYaw,
     velocity: &'static mut Velocity,
@@ -46,16 +76,23 @@ struct CloneQuery {
 }
 
 fn update_clones(
-    ents: Query<CloneQueryReadOnly, Without<ClonedEntity>>,
+    mut ents: Query<(CloneQueryReadOnly, &mut Client), Without<ClonedEntity>>,
     mut clones: Query<(CloneQuery, &ClonedEntity, Entity)>,
     mut commands: Commands,
 ) {
     for clone in &mut clones {
         let (mut clone, cloned_from, ent) = clone;
-        let Ok(src) = ents.get(cloned_from.0) else {
+        let Ok((src, mut client)) = ents.get_mut(cloned_from.0) else {
             commands.entity(ent).insert(Despawned);
             return;
         };
+
+        //Hide clones from owners. Even though I could make
+        //the player invisible, golems obscure vision due to their
+        //size.
+        client.write_packet(&EntitiesDestroyS2c {
+            entity_ids: Cow::Borrowed(&[VarInt(clone.id.get())]),
+        });
 
         *clone.position = *src.position;
         *clone.head_yaw = *src.head_yaw;
@@ -68,9 +105,15 @@ fn update_clones(
 
 //Spawn in a clone for a player when they join a team.
 fn spawn_clones(
-    query: Query<(&Position, &EntityLayerId)>,
+    mut query: Query<(
+        &Position,
+        // &EntityLayerId,
+        &Username,
+        &mut VisibleEntityLayers,
+    )>,
     mut events: EventReader<JoinTeamEvent>,
     mut commands: Commands,
+    plug_res: Res<DisguiseResource>,
 ) {
     for event in events.read() {
         let JoinTeamEvent {
@@ -79,24 +122,30 @@ fn spawn_clones(
             color,
         } = event;
 
-        let Ok((pos, layer)) = query.get(*entity) else {
+        let Ok((pos, ign, mut layers)) = query.get_mut(*entity) else {
             continue;
         };
+
+        let ign = format_ign(ign, *color);
 
         match *team {
             Team::Sheep => commands.spawn((
                 SheepEntityBundle {
                     sheep_color: to_sheep_color(color),
-                    layer: *layer,
+                    layer: EntityLayerId(plug_res.player_team_layer),
                     position: *pos,
+                    entity_name_visible: NameVisible(true),
+                    entity_custom_name: CustomName(Some(ign)),
                     ..Default::default()
                 },
                 ClonedEntity(*entity),
             )),
             Team::Golem => commands.spawn((
                 IronGolemEntityBundle {
-                    layer: *layer,
+                    layer: EntityLayerId(plug_res.player_team_layer),
                     position: *pos,
+                    entity_name_visible: NameVisible(true),
+                    entity_custom_name: CustomName(Some(ign)),
                     ..Default::default()
                 },
                 ClonedEntity(*entity),
@@ -107,6 +156,76 @@ fn spawn_clones(
             Team::Sheep => Disguise::Sheep,
             Team::Golem => Disguise::Golem,
         });
+
+        // layers.0.remove(&layer.0);
+        layers.0.insert(plug_res.player_team_layer);
+        layers.0.insert(plug_res.scoreboard_layer);
+    }
+}
+
+#[derive(Debug, Resource)]
+struct DisguiseResource {
+    player_team_layer: Entity,
+    scoreboard_layer: Entity,
+}
+
+fn setup(mut commands: Commands, server: Res<Server>) {
+    let objective_layer = commands.spawn(EntityLayer::new(&server)).id();
+    let objective = ObjectiveBundle {
+        name: Objective::new("sheeptag"),
+        display: ObjectiveDisplay("Sheeptag".color(NamedColor::Gold)),
+        layer: EntityLayerId(objective_layer),
+        // position: valence::protocol::packets::play::scoreboard_display_s2c::ScoreboardPosition::SidebarTeam(Black),
+        ..Default::default()
+    };
+    let player_team_layer = commands.spawn(EntityLayer::new(&server)).id();
+    commands.spawn(objective);
+
+    commands.insert_resource(DisguiseResource {
+        scoreboard_layer: objective_layer,
+        player_team_layer,
+    });
+}
+
+fn init_clients(
+    mut clients: Query<(&mut Client, &mut VisibleEntityLayers, &Username), Added<Client>>,
+    plug_res: Res<DisguiseResource>,
+) {
+    for (mut client, mut layers, ign) in &mut clients {
+        client.write_packet(&TeamS2c {
+            team_name: "no_collide",
+            mode: team_s2c::Mode::CreateTeam {
+                team_display_name: "NoCollide".into_cow_text(),
+                friendly_flags: TeamFlags::default(),
+                name_tag_visibility: team_s2c::NameTagVisibility::Always,
+                collision_rule: team_s2c::CollisionRule::Never,
+                team_color: team_s2c::TeamColor::White,
+                team_prefix: "".into_cow_text(),
+                team_suffix: "".into_cow_text(),
+                entities: vec![&ign.0],
+            },
+        });
+
+        layers.0.insert(plug_res.player_team_layer);
+    }
+}
+
+fn update_scoreboard(
+    players: Query<(&Username, &Team, &PlayerColor)>,
+    mut objectives: Query<&mut ObjectiveScores, With<Objective>>,
+    colors: Res<ColorMap>,
+) {
+    if !colors.is_changed() {
+        return;
+    }
+
+    //TODO: This might be a bad way of getting the objective?
+    let mut obj = objectives.single_mut();
+
+    let mut i = 0;
+    for (ign, _team, _color) in &players {
+        obj.insert(format!("{ign}"), i);
+        i += 1;
     }
 }
 
@@ -133,4 +252,27 @@ fn to_sheep_color(color: &PlayerColor) -> Color {
         PlayerColor::Red => 14,
         PlayerColor::Black => 15,
     })
+}
+
+fn format_ign(ign: &Username, color: PlayerColor) -> Text {
+    let text_color = match color {
+        PlayerColor::White => RgbColor::new(249, 255, 254),
+        PlayerColor::Orange => RgbColor::new(249, 128, 29),
+        PlayerColor::Magenta => RgbColor::new(199, 78, 189),
+        PlayerColor::Cyan => RgbColor::new(58, 179, 218),
+        PlayerColor::Yellow => RgbColor::new(254, 216, 61),
+        PlayerColor::Lime => RgbColor::new(128, 199, 31),
+        PlayerColor::Pink => RgbColor::new(243, 139, 170),
+        PlayerColor::DarkGray => RgbColor::new(71, 79, 82),
+        PlayerColor::LightGray => RgbColor::new(157, 157, 151),
+        PlayerColor::Aqua => RgbColor::new(22, 156, 156),
+        PlayerColor::Purple => RgbColor::new(137, 50, 184),
+        PlayerColor::Blue => RgbColor::new(60, 68, 170),
+        PlayerColor::Brown => RgbColor::new(131, 84, 50),
+        PlayerColor::Green => RgbColor::new(94, 124, 22),
+        PlayerColor::Red => RgbColor::new(176, 46, 38),
+        PlayerColor::Black => RgbColor::new(29, 29, 33),
+    };
+
+    ign.0.clone().color(text_color)
 }
