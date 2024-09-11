@@ -2,15 +2,13 @@ use valence::client::despawn_disconnected_clients;
 use valence::prelude::*;
 
 use valence_sheeptag::brand::SheeptagBrandPlugin;
-use valence_sheeptag::disguise::DisguisePlugin;
-use valence_sheeptag::teams::TeamPlugin;
+use valence_sheeptag::SheeptagPlugins;
 
 fn main() {
     App::new()
         .add_plugins(SheeptagBrandPlugin)
         .add_plugins(DefaultPlugins)
-        .add_plugins(TeamPlugin)
-        .add_plugins(DisguisePlugin)
+        .add_plugins(SheeptagPlugins)
         .add_systems(Startup, setup)
         .add_systems(Update, (despawn_disconnected_clients, init_clients))
         .run();
@@ -40,24 +38,14 @@ fn setup(
 }
 
 fn init_clients(
-    mut clients: Query<
-        (
-            &mut Client,
-            &mut EntityLayerId,
-            &mut VisibleChunkLayer,
-            // &mut VisibleEntityLayers,
-            &mut Position,
-        ),
-        Added<Client>,
-    >,
+    mut clients: Query<(&mut EntityLayerId, &mut VisibleChunkLayer, &mut Position), Added<Client>>,
     layers: Query<Entity, With<ChunkLayer>>,
 ) {
-    for (_, mut layer_id, mut visible_chunk_layer, mut pos) in &mut clients {
+    for (mut layer_id, mut visible_chunk_layer, mut pos) in &mut clients {
         let layer = layers.single();
 
         layer_id.0 = layer;
         visible_chunk_layer.0 = layer;
-        // visible_entity_layers.0.insert(layer);
 
         pos.set([0.5, 65.0, 0.5]);
     }

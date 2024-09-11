@@ -224,7 +224,17 @@ fn update_scoreboard(
 
     let mut i = 0;
     for (ign, _team, _color) in &players {
-        obj.insert(format!("{ign}"), i);
+        obj.insert(
+            format!(
+                "{}{}",
+                match *_team {
+                    Team::Sheep => "🐏",
+                    Team::Golem => "🗡",
+                },
+                Text::to_legacy_lossy(&format_ign(ign, *_color))
+            ),
+            i,
+        );
         i += 1;
     }
 }
