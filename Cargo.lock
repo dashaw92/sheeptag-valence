@@ -505,6 +505,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dan_world"
+version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "flate2",
+ "valence_generated",
+ "valence_nbt",
+]
+
+[[package]]
 name = "der"
 version = "0.7.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2113,6 +2123,7 @@ dependencies = [
 name = "valence-sheeptag"
 version = "0.1.0"
 dependencies = [
+ "dan_world",
  "valence",
 ]
 

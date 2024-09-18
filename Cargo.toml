@@ -11,3 +11,5 @@ opt-level = 3
 
 [dependencies]
 valence = { git = "https://github.com/valence-rs/valence" }
+# dan_world = { git = "https://github.com/dashaw92/dan_world" }
+dan_world = { path = "../dan_world" }
