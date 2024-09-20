@@ -1,3 +1,4 @@
+use dan_world::blockdata::{Axis, BisectionHalf, DanBlockData, Direction, RailShape, StairShape};
 use dan_world::DanWorld;
 use valence::client::despawn_disconnected_clients;
 use valence::prelude::*;
@@ -74,7 +75,7 @@ fn init_clients(
         visible_chunk_layer.0 = layer;
 
         pos.set([0.5, 65.0, 0.5]);
-        *gm = GameMode::Spectator;
+        *gm = GameMode::Creative;
     }
 }
 
@@ -91,15 +92,22 @@ fn place_world(world: DanWorld, layer: &mut LayerBundle) {
     }
 
     for chunk in world.chunks {
-        let mut base_y = 64;
+        let mut base_y = 1;
 
         for section in chunk.sections {
             for y in 0..16u16 {
                 for x in 0..16u16 {
                     for z in 0..16u16 {
+                        let data = section.data.get(&(x as usize, y as usize, z as usize));
+
                         let p_idx = section.blocks[((y * 256) + (x * 16) + z) as usize];
                         let block = BlockKind::from_str(&section.palette[p_idx as usize])
                             .unwrap_or(BlockKind::Podzol);
+
+                        let mut block_state = block.to_state();
+                        if data.is_some() {
+                            block_state = set_props(block_state, data.unwrap());
+                        }
 
                         let biome = section.biomes[((y * 256) + (x * 16) + z) as usize];
 
@@ -109,7 +117,7 @@ fn place_world(world: DanWorld, layer: &mut LayerBundle) {
 
                         layer
                             .chunk
-                            .set_block([actual_x, actual_y, actual_z], block.to_state());
+                            .set_block([actual_x, actual_y, actual_z], block_state);
                         layer.chunk.set_biome(
                             DVec3 {
                                 x: actual_x as f64,
@@ -124,5 +132,143 @@ fn place_world(world: DanWorld, layer: &mut LayerBundle) {
 
             base_y += 16;
         }
+    }
+}
+
+fn set_props(mut state: BlockState, data: &[DanBlockData]) -> BlockState {
+    for d in data {
+        if let DanBlockData::MultipleFacing(mf) = d {
+            for facing in mf {
+                let prop = match facing {
+                    &Direction::North => PropName::North,
+                    &Direction::East => PropName::East,
+                    &Direction::South => PropName::South,
+                    &Direction::West => PropName::West,
+                    &Direction::Up => PropName::Up,
+                    &Direction::Down => PropName::Down,
+                    _ => unreachable!(),
+                };
+
+                state = state.set(prop, PropValue::True);
+            }
+
+            continue;
+        };
+
+        let (prop, val) = to_prop(d);
+        state = state.set(prop, val);
+    }
+
+    state
+}
+
+fn to_prop(data: &DanBlockData) -> (PropName, PropValue) {
+    match data {
+        &DanBlockData::Orientation(ref axis) => (
+            PropName::Axis,
+            match axis {
+                Axis::X => PropValue::X,
+                Axis::Y => PropValue::Y,
+                Axis::Z => PropValue::Z,
+            },
+        ),
+        &DanBlockData::Age(ref age) => (PropName::Age, num_to_prop_val(age)),
+        &DanBlockData::SnowLevel(ref level) => (PropName::Layers, num_to_prop_val(level)),
+        &DanBlockData::LiquidLevel(ref level) => (PropName::Level, num_to_prop_val(level)),
+        &DanBlockData::Bisected(ref half) => (
+            PropName::Half,
+            match half {
+                &BisectionHalf::Top => PropValue::Top,
+                &BisectionHalf::Bottom => PropValue::Bottom,
+            },
+        ),
+        &DanBlockData::Direction(ref dir) => (PropName::Facing, dir_to_prop_val(dir)),
+        &DanBlockData::Waterlogged(ref wl) => (PropName::Waterlogged, bool_to_prop_val(*wl)),
+        &DanBlockData::Rotation(ref rot) => (PropName::Rotation, dir_to_prop_val(rot)),
+        &DanBlockData::Open(ref o) => (PropName::Open, bool_to_prop_val(*o)),
+        &DanBlockData::RailShape(ref r) => (PropName::Shape, rail_to_prop(r)),
+        &DanBlockData::StairShape(ref s) => (PropName::Shape, stair_to_shape(s)),
+        _ => unreachable!(),
+    }
+}
+
+fn stair_to_shape(s: &StairShape) -> PropValue {
+    match s {
+        StairShape::InnerLeft => PropValue::InnerLeft,
+        StairShape::InnerRight => PropValue::InnerRight,
+        StairShape::OuterLeft => PropValue::OuterLeft,
+        StairShape::OuterRight => PropValue::OuterRight,
+        StairShape::Straight => PropValue::Straight,
+    }
+}
+
+fn rail_to_prop(r: &RailShape) -> PropValue {
+    match r {
+        RailShape::AscEast => PropValue::AscendingEast,
+        RailShape::AscNorth => PropValue::AscendingNorth,
+        RailShape::AscSouth => PropValue::AscendingSouth,
+        RailShape::AscWest => PropValue::AscendingWest,
+        RailShape::EastWest => PropValue::EastWest,
+        RailShape::NorthEast => PropValue::NorthEast,
+        RailShape::NorthSouth => PropValue::NorthSouth,
+        RailShape::NorthWest => PropValue::NorthWest,
+        RailShape::SouthEast => PropValue::SouthEast,
+        RailShape::SouthWest => PropValue::SouthWest,
+    }
+}
+
+fn dir_to_prop_val(dir: &Direction) -> PropValue {
+    match dir {
+        &Direction::North => PropValue::North,
+        &Direction::NorthEast => PropValue::NorthEast,
+        &Direction::East => PropValue::East,
+        &Direction::SouthEast => PropValue::SouthEast,
+        &Direction::South => PropValue::South,
+        &Direction::SouthWest => PropValue::SouthWest,
+        &Direction::West => PropValue::West,
+        &Direction::NorthWest => PropValue::NorthWest,
+        &Direction::Up => PropValue::Up,
+        &Direction::Down => PropValue::Down,
+        _ => PropValue::South,
+    }
+}
+
+fn bool_to_prop_val(b: bool) -> PropValue {
+    if b {
+        PropValue::True
+    } else {
+        PropValue::False
+    }
+}
+
+fn num_to_prop_val(num: &u8) -> PropValue {
+    match *num {
+        0 => PropValue::_0,
+        1 => PropValue::_1,
+        2 => PropValue::_2,
+        3 => PropValue::_3,
+        4 => PropValue::_4,
+        5 => PropValue::_5,
+        6 => PropValue::_6,
+        7 => PropValue::_7,
+        8 => PropValue::_8,
+        9 => PropValue::_9,
+        10 => PropValue::_10,
+        11 => PropValue::_11,
+        12 => PropValue::_12,
+        13 => PropValue::_13,
+        14 => PropValue::_14,
+        15 => PropValue::_15,
+        16 => PropValue::_16,
+        17 => PropValue::_17,
+        18 => PropValue::_18,
+        19 => PropValue::_19,
+        20 => PropValue::_20,
+        21 => PropValue::_21,
+        22 => PropValue::_22,
+        23 => PropValue::_23,
+        24 => PropValue::_24,
+        25 => PropValue::_25,
+        _ => PropValue::_0,
     }
 }
