@@ -7,7 +7,13 @@ use std::{
 
 use valence::{
     app::Plugin,
+    command::{
+        handler::CommandResultEvent, parsers::GreedyString, scopes::CommandScopes, AddCommand,
+        CommandScopeRegistry,
+    },
+    command_macros::Command,
     log::{self},
+    message::SendMessage,
     prelude::*,
     uuid::Uuid,
 };
@@ -64,9 +70,46 @@ impl Plugin for PermissionsPlugin {
             }
         };
 
-        app.insert_resource(perms).add_systems(Update, monitor_ops);
+        app.add_command::<OpCommand>()
+            .add_command::<GmCommand>()
+            .add_command::<DeopCommand>()
+            .insert_resource(perms)
+            .add_systems(Startup, register_scopes)
+            .add_systems(
+                Update,
+                (
+                    monitor_ops,
+                    add_perms_to_ops,
+                    handle_op_command,
+                    handle_deop_command,
+                    handle_gm_command,
+                ),
+            )
+            .observe(notify_gm_mode_add)
+            .observe(notify_gm_mode_remove);
     }
 }
+
+#[derive(Command)]
+#[paths("deop {player}")]
+#[scopes("danny.owner")]
+struct DeopCommand {
+    #[allow(dead_code)]
+    player: GreedyString,
+}
+
+#[derive(Command)]
+#[paths("op {player}")]
+#[scopes("danny.op")]
+struct OpCommand {
+    #[allow(dead_code)]
+    player: GreedyString,
+}
+
+#[derive(Command)]
+#[paths("gm", "admin")]
+#[scopes("danny.op")]
+struct GmCommand;
 
 impl Permissions {
     pub fn is_owner(&self, player: &Uuid) -> bool {
@@ -77,17 +120,41 @@ impl Permissions {
         self.is_owner(player) || self.ops.contains(player)
     }
 
-    pub fn set_op(&mut self, player: &Uuid, op: bool) {
+    pub fn set_op(&mut self, player: &Uuid, op: bool) -> bool {
         //Cannot op/deop the owner. The owner status can
         //only be applied via manual edits to ops.txt.
         if self.is_owner(player) {
-            return;
+            return false;
         }
 
         if !self.is_op(player) && op {
             self.ops.push_back(player.clone());
+            return true;
         } else if self.is_op(player) && !op {
             self.ops.retain(|uuid| uuid != player);
+            return true;
+        }
+
+        return false;
+    }
+}
+
+fn register_scopes(mut scopes: ResMut<CommandScopeRegistry>) {
+    scopes.add_scope("danny.owner");
+    scopes.add_scope("danny.op");
+}
+
+fn add_perms_to_ops(
+    mut clients: Query<(&UniqueId, &mut CommandScopes), Added<Client>>,
+    ops: Res<Permissions>,
+) {
+    for (client, mut perms) in &mut clients {
+        if ops.is_owner(client) {
+            perms.add("danny.owner")
+        }
+
+        if ops.is_op(client) {
+            perms.add("danny.op");
         }
     }
 }
@@ -115,5 +182,100 @@ fn monitor_ops(perms: Res<Permissions>) {
     );
     for op in &perms.ops {
         _ = writeln!(bw, "{op}");
+    }
+}
+
+fn handle_op_command(
+    mut events: EventReader<CommandResultEvent<OpCommand>>,
+    mut clients: Query<(&UniqueId, &Username, &mut Client, &mut CommandScopes)>,
+    mut perms: ResMut<Permissions>,
+) {
+    for event in events.read() {
+        let target_name = event.result.player.as_str();
+        let Some((target_id, target_ign, mut target, mut scopes)) = clients
+            .iter_mut()
+            .find(|&(_, ign, _, _)| target_name == &ign.0)
+        else {
+            continue;
+        };
+
+        if perms.is_op(target_id) {
+            continue;
+        }
+
+        if perms.set_op(target_id, true) {
+            scopes.add("danny.op");
+            target.send_chat_message("You are now op.");
+            log::info!("{target_ign} is now op.");
+        }
+    }
+}
+
+fn handle_deop_command(
+    mut events: EventReader<CommandResultEvent<DeopCommand>>,
+    mut clients: Query<(
+        &UniqueId,
+        &Username,
+        &mut Client,
+        &mut CommandScopes,
+        Entity,
+    )>,
+    mut perms: ResMut<Permissions>,
+    mut commands: Commands,
+) {
+    for event in events.read() {
+        let target_name = event.result.player.as_str();
+        let Some((target_id, target_ign, mut target, mut scopes, target_ent)) = clients
+            .iter_mut()
+            .find(|&(_, ign, _, _, _)| target_name == &ign.0)
+        else {
+            continue;
+        };
+
+        if !perms.is_op(target_id) {
+            continue;
+        }
+
+        if perms.set_op(target_id, false) {
+            scopes.remove("danny.op");
+            target.send_chat_message("You are no longer op.");
+            commands.entity(target_ent).remove::<OperMode>();
+            log::info!("{target_ign} is no longer op.");
+        }
+    }
+}
+
+fn handle_gm_command(
+    mut events: EventReader<CommandResultEvent<GmCommand>>,
+    clients: Query<(&Username, Has<OperMode>)>,
+    mut commands: Commands,
+) {
+    for event in events.read() {
+        let Ok((ign, is_gm)) = clients.get(event.executor) else {
+            return;
+        };
+
+        let mut ent = commands.entity(event.executor);
+        if is_gm {
+            ent.remove::<OperMode>();
+        } else {
+            ent.insert(OperMode);
+        }
+
+        log::info!("{ign} toggled op mode.");
+    }
+}
+
+fn notify_gm_mode_add(trigger: Trigger<OnInsert, OperMode>, mut clients: Query<&mut Client>) {
+    let ent = trigger.entity();
+    if let Ok(mut client) = clients.get_mut(ent) {
+        client.send_chat_message("You are now in op mode.");
+    }
+}
+
+fn notify_gm_mode_remove(trigger: Trigger<OnRemove, OperMode>, mut clients: Query<&mut Client>) {
+    let ent = trigger.entity();
+    if let Ok(mut client) = clients.get_mut(ent) {
+        client.send_chat_message("You are no longer in op mode.");
     }
 }

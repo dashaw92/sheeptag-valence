@@ -85,7 +85,7 @@ fn init_clients(
         visible_chunk_layer.0 = layer;
 
         pos.set([0.5, 65.0, 0.5]);
-        *gm = GameMode::Creative;
+        *gm = GameMode::Survival;
         flat.0 = true;
     }
 }
