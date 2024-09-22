@@ -15,7 +15,7 @@ struct DanWorldFile(&'static str);
 
 fn main() {
     App::new()
-        .insert_resource(DanWorldFile("nether_test.dan"))
+        .insert_resource(DanWorldFile("demo_world.dan"))
         .add_plugins(SheeptagBrandPlugin)
         .add_plugins(DefaultPlugins)
         .add_plugins(SheeptagPlugins)
