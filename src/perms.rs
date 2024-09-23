@@ -14,6 +14,7 @@ use valence::{
     command_macros::Command,
     log::{self},
     message::SendMessage,
+    op_level::OpLevel,
     prelude::*,
     uuid::Uuid,
 };
@@ -266,16 +267,24 @@ fn handle_gm_command(
     }
 }
 
-fn notify_gm_mode_add(trigger: Trigger<OnInsert, OperMode>, mut clients: Query<&mut Client>) {
+fn notify_gm_mode_add(
+    trigger: Trigger<OnInsert, OperMode>,
+    mut clients: Query<(&mut Client, &mut OpLevel)>,
+) {
     let ent = trigger.entity();
-    if let Ok(mut client) = clients.get_mut(ent) {
+    if let Ok((mut client, mut oplevel)) = clients.get_mut(ent) {
         client.send_chat_message("You are now in op mode.");
+        oplevel.set(3);
     }
 }
 
-fn notify_gm_mode_remove(trigger: Trigger<OnRemove, OperMode>, mut clients: Query<&mut Client>) {
+fn notify_gm_mode_remove(
+    trigger: Trigger<OnRemove, OperMode>,
+    mut clients: Query<(&mut Client, &mut OpLevel)>,
+) {
     let ent = trigger.entity();
-    if let Ok(mut client) = clients.get_mut(ent) {
+    if let Ok((mut client, mut oplevel)) = clients.get_mut(ent) {
         client.send_chat_message("You are no longer in op mode.");
+        oplevel.set(0);
     }
 }
