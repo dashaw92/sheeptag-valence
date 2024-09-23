@@ -13,6 +13,13 @@ use valence_sheeptag::SheeptagPlugins;
 #[derive(Resource)]
 struct DanWorldFile(&'static str);
 
+#[derive(Resource)]
+struct SpawnLocation {
+    pos: [f64; 3],
+    yaw: f32,
+    pitch: f32,
+}
+
 fn main() {
     App::new()
         .insert_resource(DanWorldFile("demo_world.dan"))
@@ -61,7 +68,7 @@ fn setup(
     };
 
     let mut layer = LayerBundle::new(dim, &dimensions, &biomes, &server);
-    place_world(world, &mut layer);
+    place_world(world, &mut layer, &mut commands);
     commands.spawn(layer);
 }
 
@@ -71,26 +78,31 @@ fn init_clients(
             &mut EntityLayerId,
             &mut VisibleChunkLayer,
             &mut Position,
+            &mut Look,
             &mut GameMode,
             &mut IsFlat,
         ),
         Added<Client>,
     >,
     layers: Query<Entity, With<ChunkLayer>>,
+    spawn: Res<SpawnLocation>,
 ) {
-    for (mut layer_id, mut visible_chunk_layer, mut pos, mut gm, mut flat) in &mut clients {
+    for (mut layer_id, mut visible_chunk_layer, mut pos, mut look, mut gm, mut flat) in &mut clients
+    {
         let layer = layers.single();
 
         layer_id.0 = layer;
         visible_chunk_layer.0 = layer;
 
-        pos.set([0.5, 65.0, 0.5]);
+        pos.set(spawn.pos);
+        look.yaw = spawn.yaw;
+        look.pitch = spawn.pitch;
         *gm = GameMode::Survival;
         flat.0 = true;
     }
 }
 
-fn place_world(world: DanWorld, layer: &mut LayerBundle) {
+fn place_world(world: DanWorld, layer: &mut LayerBundle, commands: &mut Commands) {
     let width_and_padding = (world.width as i32) + 10;
     let depth_and_padding = (world.depth as i32) + 10;
 
@@ -102,10 +114,11 @@ fn place_world(world: DanWorld, layer: &mut LayerBundle) {
         }
     }
 
-    for chunk in world.chunks {
-        let mut base_y = 1;
+    const BASE_Y: u16 = 1;
+    for chunk in &world.chunks {
+        let mut current_y = BASE_Y;
 
-        for section in chunk.sections {
+        for section in &chunk.sections {
             for y in 0..16u16 {
                 for x in 0..16u16 {
                     for z in 0..16u16 {
@@ -124,7 +137,7 @@ fn place_world(world: DanWorld, layer: &mut LayerBundle) {
 
                         let actual_x = (chunk.x * 16 + x) as i32;
                         let actual_z = (chunk.z * 16 + z) as i32;
-                        let actual_y = (base_y + y) as i32;
+                        let actual_y = (current_y + y) as i32;
 
                         layer
                             .chunk
@@ -141,8 +154,24 @@ fn place_world(world: DanWorld, layer: &mut LayerBundle) {
                 }
             }
 
-            base_y += 16;
+            current_y += 16;
         }
+    }
+
+    if let Some(spawn) = &world.get_extra("spawn") {
+        let Ok(coords) = spawn.to_coords() else {
+            commands.insert_resource(SpawnLocation {
+                pos: [0.5, 65.0, 0.0],
+                yaw: 0.0,
+                pitch: 0.0,
+            });
+            return;
+        };
+
+        let pos = [coords[0], coords[1] + BASE_Y as f64, coords[2]];
+        let yaw = coords[3] as f32;
+        let pitch = coords[4] as f32;
+        commands.insert_resource(SpawnLocation { pos, yaw, pitch });
     }
 }
 

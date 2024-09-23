@@ -70,9 +70,9 @@ checksum = "5ecc8056bf6ab9892dcd53216c83d1597487d7dacac16c8df6b877d127df9937"
 
 [[package]]
 name = "anyhow"
-version = "1.0.87"
+version = "1.0.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10f00e1f6e58a40e807377c75c6a7f97bf9044fab57816f2414e6f5f4499d7b8"
+checksum = "86fdf8605db99b54d3cd748a44c6d04df638eb5dafb219b135d0149bd0db01f6"
 dependencies = [
  "backtrace",
 ]
@@ -508,10 +508,9 @@ dependencies = [
 name = "dan_world"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "byteorder",
  "flate2",
- "valence_generated",
- "valence_nbt",
 ]
 
 [[package]]
